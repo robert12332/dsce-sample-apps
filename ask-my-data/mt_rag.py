@@ -1,3 +1,5 @@
+import ibmdata.isdw
+import ibmdata.isdwtest
 import os, base64, bcrypt, decimal, hashlib, json, requests, time, uuid
 from flask import Flask, request, render_template, Response
 from ibm_watson_machine_learning.foundation_models import Model
@@ -9,6 +11,7 @@ from langchain_community.document_loaders import UnstructuredPDFLoader
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 # vector store used for all tenants
+import ibmdata
 from langchain_community.vectorstores import FAISS
 import pandas as pd
 import mysql.connector
@@ -17,8 +20,8 @@ from sql_formatter.core import format_sql
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# initialization 
+print(ibmdata.isdwtest.get_tables_in_schema("dmiw_fielddata"))
+# initialization
 
 WML_SERVER_URL=os.getenv("WML_SERVER_URL", default="https://us-south.ml.cloud.ibm.com")
 
@@ -129,16 +132,19 @@ DB_PORT = os.environ.get("DB_PORT")
 DB_NAME = os.environ.get("DB_NAME")
 
 # Get database connection
-connection_pool = pooling.MySQLConnectionPool(pool_size=10, user=DB_USER, password=base64.b64decode(DB_PASS).decode("utf-8"), database=DB_NAME,
-            host=DB_HOST, port=DB_PORT)
+# connection_pool = pooling.MySQLConnectionPool(pool_size=10, user=DB_USER, password=base64.b64decode(DB_PASS).decode("utf-8"), database=DB_NAME,
+#             host=DB_HOST, port=DB_PORT)
 
 def getDBConnection():
     try:
         print('getting db connection')
-        cnx = connection_pool.get_connection()
+        cnx = ibmdata.isdw#connection_pool.get_connection()
+        print(cnx.query("Select DISTINCT fr.run_id From dmiw_fielddata.fieldrun fr Where fr.test_program_name in ('WR_EYE', 'WR_EYE_2D', 'RD_EYE', 'RD_EYE_2D', 'CAC', 'CA_ALL_2D','CS_ALL_2D','WR_VREF_1D', 'RD_VREF_1D', 'RCW_CAC', 'DCA_ALL', 'DCA_QBCLK', 'DCA_IBCLK', 'DCA_QCLK', 'RDTAG') and fr.source_data_type = 'DRAMJSON'"))
         print('db connection successful.')
+
         return cnx
-    except mysql.connector.Error as err:
+
+    except ibmdata.IBMDataError as err:
         print(f"Error while acquiring connection: {err}")
 
 def executeSQLQuery(query):
@@ -150,18 +156,16 @@ def executeSQLQuery(query):
 	query = query.replace(";", "")
 	print('query to execute:', query)
 	try:
-		db_cnx = getDBConnection()
-		cursor = db_cnx.cursor(dictionary=True)
-		cursor.execute(query)
-		rows = cursor.fetchall()
-		cursor.close()
+
+		rows=ibmdata.isdw.query(query)
+		print(rows)
+
 		return rows
-	except mysql.connector.Error as err:
+	except ibmdata.IBMDataError as err:
 		print(f"Error while executing query. Error: {err}")
 		return "Unable to get answer, please retry with another query."
 	finally:
-		if 'db_cnx' in locals() and db_cnx.is_connected():
-			db_cnx.close()
+		if 'db_cnx' in locals() and ibmdata.isdw.connected():
 			print("Found an open db_cnx. Closed.")
 
 # Create databse table, load data into table, create sql prompt file
@@ -169,7 +173,7 @@ def loadFromCsv(filepath, filename, id):
 	data = pd.read_csv(filepath)
 	df = pd.DataFrame(data)
 
-	tablename = id.replace(".", "_")
+	tablename = "DRAMJSON"
 	cols_script = ""
 	for col in df.columns:
 		cols = col.split("#")
@@ -177,38 +181,12 @@ def loadFromCsv(filepath, filename, id):
 
 	# creating prompt
 	createSQLPrompt(tablename, df.columns, id)
-	
-	create_script = f"CREATE TABLE {tablename} ({cols_script[:-1]})"
 
-	drop_script = f"DROP TABLE {tablename}"
-	executeSQLQuery(drop_script)
-	executeSQLQuery(create_script)
+	# executeSQLQuery(drop_script)
+	#executeSQLQuery(create_script)
 
 	# Insert DataFrame to Table
 	cnx = getDBConnection()
-	cursor = cnx.cursor()
-	try:
-		for row in df.itertuples(False):
-			row_script = ''
-			for x in row:
-				row_script += "{},".format(str(x)) if isinstance(x, float) else f"'{x}'," 
-			cursor.execute(f'''
-				INSERT INTO {tablename}
-				VALUES ({row_script[:-1]})
-				'''
-			)
-		cnx.commit()
-		cursor.close()
-		cnx.close()
-
-		print("Data loaded successfully")
-	except mysql.connector.Error as err:
-		cnx.rollback()
-		cursor.close()
-		cnx.close()
-		print("Error in csv loading. Error:", err)
-		return err
-
 	return
 
 # Create Sql gen prompt
@@ -222,8 +200,8 @@ def createSQLPrompt(tablename, attributes, id):
 		coltype = fields[1].strip()
 		coldesc = fields[2].strip()
 		prompt += f"\n{colname} # {coldesc}"
-    
-	users_data[id]["sql_gen"]["prompt"] = prompt+"\n\nInput:\nwhat is average salary by position?\n\nOutput:\nselect position, avg(salary) as avg_salary from {} group by position order by avg_salary desc;".format(tablename)
+
+	#users_data[id]["sql_gen"]["prompt"] = prompt+"\n\nInput:\nwhat is average salary by position?\n\nOutput:\nselect position, avg(salary) as avg_salary from {} group by position order by avg_salary desc;".format(tablename)
 	# prompt.close()
 
 def fireSqlAndCreateTable(llm_result):
@@ -306,7 +284,7 @@ def load_files(id):
 	if(split_tup[1] == '.csv'):
 		with open('payload/sql_gen.json') as payload_f:
 			payload_f_json = json.load(payload_f)
-		users_data[id]["sql_gen"] = {"prompt":"", "model_id":payload_f_json["model_id"], "max_new_tokens":payload_f_json["parameters"]["max_new_tokens"], "stop_sequences":payload_f_json["parameters"]["stop_sequences"]}
+		#users_data[id]["sql_gen"] = {"prompt":"", "model_id":payload_f_json["model_id"], "max_new_tokens":payload_f_json["parameters"]["max_new_tokens"], "stop_sequences":payload_f_json["parameters"]["stop_sequences"]}
 		current_label[id] = "sql_gen"
 		msg = loadFromCsv(file_path, split_tup[0], id)
 		stores[id] = "csv_file"
@@ -390,20 +368,20 @@ def llm_call(id,q,type):
 	authenticator = IAMAuthenticator(API_KEY)
 	access_token = authenticator.token_manager.get_token()
 	prompt_file = users_data[id][type]["prompt"]
-	
+
 	if(prompt_file.count("Input:") != prompt_file.count("Output:")):
 		return "Input and Output must be in pair"
-	
+
 	li1 = prompt_file.split("Instruction:")
 	li2 = li1[1].split("Input:")
 	instruction = li2[0].strip()
-	
+
 	if(len(li2)>1 and "Output:" in li2[1]):
 		li3 = li2[1].split("Output:")
 		# checking if inout or output is not empty or if there are more than 1 input output pairs
 		if(li3[0].strip()!="" or li3[1].strip()!="" or prompt_file.count("Input:")>1):
 			custom_example=True
-	
+
 	input_prompt = instruction if len(instruction)!=0 else q
 	print("Input_prompt : ",input_prompt)
 	payload_f_json["project_id"] = WATSONX_PROJECT_ID
@@ -414,7 +392,7 @@ def llm_call(id,q,type):
 		payload_f_json["input"] = input_prompt+"\n\nInput:\n"+(text_converted[id] if (type!="sql_gen") else q)+"\n\nOutput:\n"
 	else:
 		payload_f_json["input"] = input_prompt+"\n\n"+prompt_file[prompt_file.find('Input:'):]+"\n\nInput:\n"+(text_converted[id] if (type!="sql_gen") else q)+"\n\nOutput:\n"
-	
+
 	print("Payload input : ",payload_f_json)
 	response_llm = requests.post(SERVER_URL, headers=get_header_with_access_tkn(access_token), data=json.dumps(payload_f_json))
 	response_llm_json = response_llm.json()
@@ -434,11 +412,11 @@ def serve_index_page():
 def verify_user():
 	data = request.json
 	email = data["email"]
-	
+
 	# User verification logic - Start
 
 	verified = True # True - if verification is passed, False - if verification failed
-	
+
 	# User verification logic - End
 
 	id = email.split("@")[0]
@@ -453,12 +431,12 @@ def verify_user():
 def get_prompt(id, ai_task):
 	try:
 		type = current_label[id] if ai_task=="none" else ai_task
-		return {"data":users_data[id][type],"type": type, "ok":True}
-		# return {"prompt":users_data[id][type]["prompt"],"model_id":users_data[id][type]["model_id"],"max_new_tokens":users_data[id][type]["max_new_tokens"], "stop_sequences": users_data[id][type]["stop_sequences"],"type": type, "ok":True}
+		#return {"data":users_data[id][type],"type": type, "ok":True}
+		return {"prompt":users_data[id][type]["prompt"],"model_id":users_data[id][type]["model_id"],"max_new_tokens":users_data[id][type]["max_new_tokens"], "stop_sequences": users_data[id][type]["stop_sequences"],"type": type, "ok":True}
 	except:
 		return {"data":"No data available", "type": type, "ok":True}
 
-# Update/Set prompt in the user's data 
+# Update/Set prompt in the user's data
 @app.route('/update-prompt/<id>', methods=["PUT"])
 def update_prompt(id):
 	data = request.json
@@ -485,8 +463,8 @@ def update_prompt(id):
 
 		ll_prompt = PromptTemplate(template=data["new_prompt"], input_variables=["context", "question"])
 		chains[id] = ConversationalRetrievalChain.from_llm(model.to_langchain(), retrievers[id], combine_docs_chain_kwargs={"prompt": ll_prompt}, return_source_documents=True)
-		
-	
+
+
 	return {"resp":"Prompt updated", "ok":True}
 
 # Invoke LLM API
@@ -504,7 +482,7 @@ def get_answer():
 			print("Generated SQL query : ",llm_query)
 			htmltable = fireSqlAndCreateTable(llm_query)
 			current_label[id] = "sql_gen"
-			return {"ok":True, "ans":htmltable, "source": format_sql(llm_query) if len(llm_query)>0 else ""}	
+			return {"ok":True, "ans":htmltable, "source": format_sql(llm_query) if len(llm_query)>0 else ""}
 
 		if(question.strip()[:2]=="Q:"):
 			label = "rag"
@@ -522,7 +500,7 @@ def get_answer():
 				source_document += "<strong><u>Source chunk {} :</u></strong><br/><p>{}</p><br/>".format(str(i+1), doc.page_content)
 		else:
 			answer = llm_call(id, question, label)
-		
+
 		return {"ok":True, "ans":answer, "source": source_document}
 	except Exception as error:
 		return {"ok":False, "ans":error, "source": None}
@@ -550,5 +528,5 @@ def isVerified(auth_code):
 
 if __name__ == '__main__':
 	SERVICE_PORT = os.getenv("SERVICE_PORT", default="8050")
-	DEBUG_MODE = eval(os.getenv("DEBUG_MODE", default="False"))
+	DEBUG_MODE = eval(os.getenv("DEBUG_MODE", default="True"))
 	app.run(port=SERVICE_PORT, debug=DEBUG_MODE)

@@ -1,5 +1,6 @@
 import ibmdata.isdw
 import ibmdata.isdwtest
+import ibmdata.qdat
 import os, base64, bcrypt, decimal, hashlib, json, requests, time, uuid
 from flask import Flask, request, render_template, Response
 from ibm_watson_machine_learning.foundation_models import Model
@@ -139,10 +140,9 @@ def getDBConnection():
     try:
         print('getting db connection')
         cnx = ibmdata.isdw#connection_pool.get_connection()
-        print(cnx.query("Select DISTINCT fr.run_id From dmiw_fielddata.fieldrun fr Where fr.test_program_name in ('WR_EYE', 'WR_EYE_2D', 'RD_EYE', 'RD_EYE_2D', 'CAC', 'CA_ALL_2D','CS_ALL_2D','WR_VREF_1D', 'RD_VREF_1D', 'RCW_CAC', 'DCA_ALL', 'DCA_QBCLK', 'DCA_IBCLK', 'DCA_QCLK', 'RDTAG') and fr.source_data_type = 'DRAMJSON'"))
+        print(ibmdata.qdat.query("""     select *
+     			from p11_vmax.p11_sort1_sort191"""))
         print('db connection successful.')
-
-        return cnx
 
     except ibmdata.IBMDataError as err:
         print(f"Error while acquiring connection: {err}")
@@ -271,6 +271,7 @@ def load_files(id):
 	split_tup = os.path.splitext(file.filename)
 	unique_filename = uuid.uuid4().hex
 	file_path = 'upload/{}{}'.format(unique_filename, split_tup[1])
+	print(file_path)
 	file.save(file_path)
 	if(FILE_LOCK_ENABLED):
 		file_hash_value = hash_file(file_path)
@@ -295,7 +296,7 @@ def load_files(id):
 		texts = text_splitter.split_documents(documents)
 		all_docs.extend(texts)
 		print("Length: {}".format(len(texts)))
-
+		print(all_docs)
 		# # load in vector index for tenant
 		stores[id] = FAISS.from_documents(all_docs, embeddings)
 		retrievers[id] = stores[id].as_retriever()
@@ -336,15 +337,22 @@ def get_header_with_access_tkn(access_token):
 
 # llm call to identify type of question asked
 def find_label(text, id):
-	authenticator = IAMAuthenticator(API_KEY)
-	access_token = authenticator.token_manager.get_token()
-	with open('payload/label_classifier.json') as payload_f:
-		payload_f_json = json.load(payload_f)
-	payload_f_json['project_id'] = WATSONX_PROJECT_ID
-	payload_f_json['input'] = users_data[id]["label_classifier"]["prompt"]+text+"\nOutput:"
-	response_llm = requests.post(SERVER_URL, headers=get_header_with_access_tkn(access_token), data=json.dumps(payload_f_json))
-	response_llm_json = response_llm.json()
-	return response_llm_json['results'][0]['generated_text']
+    authenticator = IAMAuthenticator(API_KEY)
+    access_token = authenticator.token_manager.get_token()
+    with open("payload/label_classifier.json") as payload_f:
+        payload_f_json = json.load(payload_f)
+    payload_f_json["project_id"] = WATSONX_PROJECT_ID
+    payload_f_json["input"] = (
+        users_data[id]["label_classifier"]["prompt"] + text + "\nOutput:"
+    )
+    response_llm = requests.post(
+        SERVER_URL,
+        headers=get_header_with_access_tkn(access_token),
+        data=json.dumps(payload_f_json),
+    )
+    response_llm_json = response_llm.json()
+    print(response_llm_json["results"][0]["generated_text"])
+    return response_llm_json["results"][0]["generated_text"]
 
 # call to rag
 def answer_from_rag(id, q):
@@ -530,3 +538,4 @@ if __name__ == '__main__':
 	SERVICE_PORT = os.getenv("SERVICE_PORT", default="8050")
 	DEBUG_MODE = eval(os.getenv("DEBUG_MODE", default="True"))
 	app.run(port=SERVICE_PORT, debug=DEBUG_MODE)
+	getDBConnection()

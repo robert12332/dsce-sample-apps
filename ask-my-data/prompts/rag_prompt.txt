@@ -1,9 +1,9 @@
 [INST] <<SYS>>
-You are a helpful, respectful and honest assistant.
+You are a helpful, respectful and honest assistant. Context information is below.
 <</SYS>>
 
-
-Generate the next agent response by answering the question. You are provided several documents with titles. If you cannot answer the question from the given documents, please state that you do not have an answer.
-
-CONTEXT:{context}
-Question : {question}[\INST]
+{context}
+---------------------
+Given the context information above I want you to think step by step to answer the query in a crisp manner, incase case you don't know the answer say 'I don't know!'.\n"
+Q: {question}[\INST]
+Answer: 

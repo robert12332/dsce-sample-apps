@@ -138,8 +138,9 @@ DB_NAME = os.environ.get("DB_NAME")
 def getDBConnection():
     try:
         print('getting db connection')
-        cnx = ibmdata.isdw#connection_pool.get_connection()
-        print(cnx.query("Select DISTINCT fr.run_id From dmiw_fielddata.fieldrun fr Where fr.test_program_name in ('WR_EYE', 'WR_EYE_2D', 'RD_EYE', 'RD_EYE_2D', 'CAC', 'CA_ALL_2D','CS_ALL_2D','WR_VREF_1D', 'RD_VREF_1D', 'RCW_CAC', 'DCA_ALL', 'DCA_QBCLK', 'DCA_IBCLK', 'DCA_QCLK', 'RDTAG') and fr.source_data_type = 'DRAMJSON'"))
+        cnx = ibmdata.isdw #connection_pool.get_connection()
+        test= cnx.query("Select DISTINCT fr.run_id From dmiw_fielddata.fieldrun fr Where fr.test_program_name in ('WR_EYE', 'WR_EYE_2D', 'RD_EYE', 'RD_EYE_2D', 'CAC', 'CA_ALL_2D','CS_ALL_2D','WR_VREF_1D', 'RD_VREF_1D', 'RCW_CAC', 'DCA_ALL', 'DCA_QBCLK', 'DCA_IBCLK', 'DCA_QCLK', 'RDTAG') and fr.source_data_type = 'DRAMJSON'")
+        print(test.head())
         print('db connection successful.')
 
         return cnx
@@ -154,11 +155,14 @@ def executeSQLQuery(query):
 	for stopword in stopwords:
 		query = query.replace(stopword, "")
 	query = query.replace(";", "")
-	print('query to execute:', query)
+	print('QUERY to execute:', query)
 	try:
 
 		rows=ibmdata.isdw.query(query)
-		print(rows)
+
+		print(rows.head())
+
+		print("OUTPUT FROM QUERY")
 
 		return rows
 	except ibmdata.IBMDataError as err:
@@ -170,14 +174,19 @@ def executeSQLQuery(query):
 
 # Create databse table, load data into table, create sql prompt file
 def loadFromCsv(filepath, filename, id):
-	data = pd.read_csv(filepath)
+	data = ibmdata.isdw.query("Select fr.run_id, fr.start_timestamp, fr.responsible_eng, fr.home_directory, fr.comment, fr.machine_type, fr.machine_serial, fr.machine_model, fr.location_ID, fr.firmware, fr.test_program_name, fc.ecid_raw_data, fc.component_pn, fc.component_serial_number, fc.component_mfg_location, fc.component_jedec_id, fc.component_mfg_revision, fc.component_description, fc.component_ec, fc.component_location, fc.component_id, fc.component_type, xmlcast(xmlquery('$XATTRIBUTES/A/D/PSRO') as varchar(120)) as psro, xmlcast(xmlquery('$XCONDITIONS/C/D/FREQ') as varchar(120)) as freq, xmlcast(xmlquery('$XCONDITIONS/C/D/TEMP') as varchar(120)) as temp, xmlcast(xmlquery('$XCONDITIONS/C/D/VCORE') as varchar(120)) as vcore, xmlcast(xmlquery('$XCONDITIONS/C/D/VDRAM') as varchar(120)) as vdram, xmlcast(xmlquery('$XCONDITIONS/C/D/VPP') as varchar(120)) as vpp, xmlcast(xmlquery('$XCONDITIONS/C/S/INTERLEAVE') as varchar(120)) as interleave, xmlcast(xmlquery('$XCONDITIONS/C/S/PATTERN') as varchar(120)) as pattern, xmlcast(xmlquery('$XCONDITIONS/C/D/V1P1') as varchar(120)) as V1p1, xmlcast(xmlquery('$XCONDITIONS/C/D/V1P8') as varchar(120)) as V1p8, xmlcast(xmlquery('$XCONDITIONS/C/D/PMIC0_REVISON') as varchar(120)) as PMIC0_rev, xmlcast(xmlquery('$XCONDITIONS/C/D/PMIC1_REVISON') as varchar(120)) as PMIC1_rev, xmlcast(xmlquery('$XCONDITIONS/C/S/PMIC0_VENDOR') as varchar(120)) as PMIC0_vendor, xmlcast(xmlquery('$XCONDITIONS/C/S/PMIC1_VENDOR') as varchar(120)) as PMIC1_vendor, xmlcast(xmlquery('$XCONDITIONS/C/D/VCOREANALOG') as varchar(120)) as VcoreAnalog, xmlcast(xmlquery('$XCONDITIONS/C/D/VINMGMT') as varchar(120)) as VinMgmt, xmlcast(xmlquery('$XCONDITIONS/C/D/VINBULK') as varchar(120)) as VinBulk, xmlcast(xmlquery('$XCONDITIONS/C/D/VIO') as varchar(120)) as VIO, xmlcast(xmlquery('$XCONDITIONS/C/D/COMPONENT_FW') as varchar(120)) as component_fw from dmiw_fielddata.fieldparmfact fpf join dmiw_fielddata.fieldcomponent fc on fc.fieldcomponentkey = fpf.fieldcomponentkey join dmiw_fielddata.fieldparm fp on fp.fieldparmkey = fpf.fieldparmkey join dmiw_fielddata.fieldsubcomponent sc on sc.fieldsubcomponentkey = fpf.fieldsubcomponentkey join dmiw_fielddata.fieldconditions c on c.fieldconditionskey = fpf.fieldconditionskey join dmiw_fielddata.fieldrun fr on fr.fieldrunkey = fpf.fieldrunkey Where fr.source_data_type = 'DRAMJSON' and fp.parm_label='Setup' and fr.run_id = 'AUS~WR_VREF_1D~3910~Z01~5A320~20250321185734' ")
+	#pd.read_csv(filepath)
 	df = pd.DataFrame(data)
 
-	tablename = "DRAMJSON"
+	tablename = "fieldrun"
+	print(df)
+	print("COLUMNS ABOVEEEEEE\n")
 	cols_script = ""
 	for col in df.columns:
-		cols = col.split("#")
-		cols_script += f"{cols[0]} {cols[1]},"
+		print(col)
+		cols = col.split(",")
+		print(cols)
+		cols_script += f"{cols[0]}"
 
 	# creating prompt
 	createSQLPrompt(tablename, df.columns, id)
@@ -191,22 +200,23 @@ def loadFromCsv(filepath, filename, id):
 
 # Create Sql gen prompt
 def createSQLPrompt(tablename, attributes, id):
-	# prompt = open("upload/{}_sqlprompt.txt".format(id), "w")
-	prompt = f"Instruction:You are a developer writing SQL queries given natural language questions. The database contains a table. The schema of the table with description of the attributes is given. Write the SQL query given a natural language statement.\nHere is the table.\n\nDatabase Table Name: {tablename}\nTable Schema:\nColumn name # Meaning"
-	# prompt.writelines(L)
-	for col in attributes:
-		fields = col.split('#')
-		colname = fields[0].strip()
-		coltype = fields[1].strip()
-		coldesc = fields[2].strip()
-		prompt += f"\n{colname} # {coldesc}"
+	print("IN CREATE QUERY")
+	#prompt = open("upload/{}_sqlprompt.txt".format(id), "w")
+	prompt = f"Instruction:You are a developer writing SQL queries given natural language questions. The database contains a table. Write the SQL query given a natural language statement.\n The table contians data of each run where we identify it using fr.run_id. Here is the table.\n\nDatabase Table Name: {tablename}\nTable Schema:\nColumn names  "
 
-	#users_data[id]["sql_gen"]["prompt"] = prompt+"\n\nInput:\nwhat is average salary by position?\n\nOutput:\nselect position, avg(salary) as avg_salary from {} group by position order by avg_salary desc;".format(tablename)
-	# prompt.close()
+	for col in attributes:
+
+		prompt += f"\n{col} "
+
+	users_data[id]["sql_gen"]["prompt"] = prompt+"\n\nInput:\nThis is a sample query for all that data related to the run_id AUS~WR_VREF_1D~3910~Z01~5A320~20250321185734? There is also a query for grabbing all frequencies that have been used in the testing of DDIMMS.\n\nOutput:\n  Select fr.run_id, fr.start_timestamp, fr.responsible_eng, fr.home_directory, fr.comment, fr.machine_type, fr.machine_serial, fr.machine_model, fr.location_ID, fr.firmware, fr.test_program_name, fc.ecid_raw_data, fc.component_pn, fc.component_serial_number, fc.component_mfg_location, fc.component_jedec_id, fc.component_mfg_revision, fc.component_description, fc.component_ec, fc.component_location, fc.component_id, fc.component_type, xmlcast(xmlquery('$XATTRIBUTES/A/D/PSRO') as varchar(120)) as psro, xmlcast(xmlquery('$XCONDITIONS/C/D/FREQ') as varchar(120)) as freq, xmlcast(xmlquery('$XCONDITIONS/C/D/TEMP') as varchar(120)) as temp, xmlcast(xmlquery('$XCONDITIONS/C/D/VCORE') as varchar(120)) as vcore, xmlcast(xmlquery('$XCONDITIONS/C/D/VDRAM') as varchar(120)) as vdram, xmlcast(xmlquery('$XCONDITIONS/C/D/VPP') as varchar(120)) as vpp, xmlcast(xmlquery('$XCONDITIONS/C/S/INTERLEAVE') as varchar(120)) as interleave, xmlcast(xmlquery('$XCONDITIONS/C/S/PATTERN') as varchar(120)) as pattern, xmlcast(xmlquery('$XCONDITIONS/C/D/V1P1') as varchar(120)) as V1p1, xmlcast(xmlquery('$XCONDITIONS/C/D/V1P8') as varchar(120)) as V1p8, xmlcast(xmlquery('$XCONDITIONS/C/D/PMIC0_REVISON') as varchar(120)) as PMIC0_rev, xmlcast(xmlquery('$XCONDITIONS/C/D/PMIC1_REVISON') as varchar(120)) as PMIC1_rev, xmlcast(xmlquery('$XCONDITIONS/C/S/PMIC0_VENDOR') as varchar(120)) as PMIC0_vendor, xmlcast(xmlquery('$XCONDITIONS/C/S/PMIC1_VENDOR') as varchar(120)) as PMIC1_vendor, xmlcast(xmlquery('$XCONDITIONS/C/D/VCOREANALOG') as varchar(120)) as VcoreAnalog, xmlcast(xmlquery('$XCONDITIONS/C/D/VINMGMT') as varchar(120)) as VinMgmt, xmlcast(xmlquery('$XCONDITIONS/C/D/VINBULK') as varchar(120)) as VinBulk, xmlcast(xmlquery('$XCONDITIONS/C/D/VIO') as varchar(120)) as VIO, xmlcast(xmlquery('$XCONDITIONS/C/D/COMPONENT_FW') as varchar(120)) as component_fw from dmiw_fielddata.fieldparmfact fpf join dmiw_fielddata.fieldcomponent fc on fc.fieldcomponentkey = fpf.fieldcomponentkey join dmiw_fielddata.fieldparm fp on fp.fieldparmkey = fpf.fieldparmkey join dmiw_fielddata.fieldsubcomponent sc on sc.fieldsubcomponentkey = fpf.fieldsubcomponentkey join dmiw_fielddata.fieldconditions c on c.fieldconditionskey = fpf.fieldconditionskey join dmiw_fielddata.fieldrun fr on fr.fieldrunkey = fpf.fieldrunkey Where fr.source_data_type = 'DRAMJSON' and fp.parm_label='Setup' and fr.run_id = 'AUS~WR_VREF_1D~3910~Z01~5A320~20250321185734'{}; Select distinct xmlcast(xmlquery('$XCONDITIONS/C/D/FREQ') as int) as freq From dmiw_systems.fieldcomponent fc join dmiw_systems.fieldparmfact fpf on fc.fieldcomponentkey = fpf.fieldcomponentkey join dmiw_systems.fieldrun fr on fr.fieldrunkey = fpf.fieldrunkey join dmiw_systems.fieldconditions c on c.fieldconditionskey = fpf.fieldconditionskey join dmiw_systems.fieldparm fp on fp.fieldparmkey = fpf.fieldparmkey where fr.source_data_type = 'DRAMJSON' and fp.parm_label='Setup' Order by freq asc;".format(tablename)
+	print(users_data[id]["sql_gen"]['prompt'])
+	print(users_data[id])
+	#prompt.close()
 
 def fireSqlAndCreateTable(llm_result):
 
     # Execute query
+	print("ENTERED SQL QUERY")
 	query_result = executeSQLQuery(llm_result)
 	print("Query result: ",query_result)
 	htmltable = ""
@@ -284,7 +294,7 @@ def load_files(id):
 	if(split_tup[1] == '.csv'):
 		with open('payload/sql_gen.json') as payload_f:
 			payload_f_json = json.load(payload_f)
-		#users_data[id]["sql_gen"] = {"prompt":"", "model_id":payload_f_json["model_id"], "max_new_tokens":payload_f_json["parameters"]["max_new_tokens"], "stop_sequences":payload_f_json["parameters"]["stop_sequences"]}
+		users_data[id]["sql_gen"] = {"prompt":"", "model_id":payload_f_json["model_id"], "max_new_tokens":payload_f_json["parameters"]["max_new_tokens"], "stop_sequences":payload_f_json["parameters"]["stop_sequences"]}
 		current_label[id] = "sql_gen"
 		msg = loadFromCsv(file_path, split_tup[0], id)
 		stores[id] = "csv_file"
@@ -363,12 +373,16 @@ def answer_from_rag(id, q):
 # llm call
 def llm_call(id,q,type):
 	custom_example=False
+	print('payload/{}.json'.format(type))
+	print("NEW HERE")
 	with open('payload/{}.json'.format(type)) as payload_f:
 		payload_f_json = json.load(payload_f)
+	print(payload_f_json)
 	authenticator = IAMAuthenticator(API_KEY)
 	access_token = authenticator.token_manager.get_token()
 	prompt_file = users_data[id][type]["prompt"]
-
+	print(prompt_file)
+	print("F HERE")
 	if(prompt_file.count("Input:") != prompt_file.count("Output:")):
 		return "Input and Output must be in pair"
 
@@ -395,6 +409,7 @@ def llm_call(id,q,type):
 
 	print("Payload input : ",payload_f_json)
 	response_llm = requests.post(SERVER_URL, headers=get_header_with_access_tkn(access_token), data=json.dumps(payload_f_json))
+	print("REPONSE FROM LLM",response_llm)
 	response_llm_json = response_llm.json()
 	stop_sequences = users_data[id][type]["stop_sequences"]
 	res = response_llm_json['results'][0]['generated_text']
@@ -471,19 +486,23 @@ def update_prompt(id):
 @app.route('/query', methods=["POST"])
 def get_answer():
 	try:
+
 		data = request.json
 		id, question, question_type = data["userId"], data["question"], data["question_type"]
 		print(id, question, question_type)
 
 		label = None
+		print("HERHEREHUEHROIUFHNSBKISBLSLHBVCIUSBCHIUPBIRCBIUPEWRBVICUSBICVBIUSBCIUBSIUBCIUBSIULCBSBVCJKSBHL")
+		print("NEXT IF STATEMNT")
 		if (question_type == "csv" and "sql_gen" in users_data[id]):
+			print("IF QUESTION TYPE=cvsv")
 			llm_query = llm_call(id, question, "sql_gen")
-			# llm_query = llm_query.replace(";","").strip()
+			llm_query = llm_query.replace(";","").strip()
 			print("Generated SQL query : ",llm_query)
 			htmltable = fireSqlAndCreateTable(llm_query)
 			current_label[id] = "sql_gen"
 			return {"ok":True, "ans":htmltable, "source": format_sql(llm_query) if len(llm_query)>0 else ""}
-
+		print("not in that csv question if statment for sql_gen")
 		if(question.strip()[:2]=="Q:"):
 			label = "rag"
 		else:
